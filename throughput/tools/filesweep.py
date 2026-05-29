@@ -15,14 +15,23 @@ import os
 import shutil
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from ..buckets import default_byte_sizes, ops_for_bucket
 from ..results import BenchmarkResult, ResultSet, MB
+from ._parallel import map_chunked
+from ._payload import random_payload
+
+# Read in bounded chunks so we never hold a whole large file in memory just to
+# count its bytes (a 256 MB file × N threads would otherwise spike RSS).
+_READ_CHUNK = 1 << 20
+
+# Cap files per directory so the smallest bucket (tens of thousands of tiny
+# files) doesn't pile into one directory and hit filesystem dir-scaling costs.
+_FILES_PER_DIR = 1000
 
 
-def _write_file(path: Path, buf: bytes, fsync: bool) -> None:
+def _write_file(path: Path, buf, fsync: bool) -> None:
     with open(path, "wb") as fh:
         fh.write(buf)
         if fsync:
@@ -31,18 +40,27 @@ def _write_file(path: Path, buf: bytes, fsync: bool) -> None:
 
 
 def _read_file(path: Path) -> int:
+    total = 0
     with open(path, "rb") as fh:
-        return len(fh.read())
+        while chunk := fh.read(_READ_CHUNK):
+            total += len(chunk)
+    return total
+
+
+def _bucket_paths(test_dir: Path, ops: int) -> list[Path]:
+    """Pre-create sharded subdirs and return ``ops`` file paths spread across them."""
+    ndirs = max(1, (ops + _FILES_PER_DIR - 1) // _FILES_PER_DIR)
+    dirs = []
+    for d in range(ndirs):
+        sub = test_dir / f"d{d:04d}"
+        sub.mkdir(exist_ok=True)
+        dirs.append(sub)
+    return [dirs[i // _FILES_PER_DIR] / f"f_{i}.dat" for i in range(ops)]
 
 
 def _timed(fn, items, threads: int) -> float:
     start = time.perf_counter()
-    if threads <= 1:
-        for it in items:
-            fn(it)
-    else:
-        with ThreadPoolExecutor(max_workers=threads) as ex:
-            list(ex.map(fn, items))
+    map_chunked(fn, items, threads)
     return max(time.perf_counter() - start, 1e-9)
 
 
@@ -59,8 +77,8 @@ def run_sweep(path: str | Path, *, sizes: dict[str, int] | None = None,
     try:
         for label, size in sorted(sizes.items(), key=lambda kv: kv[1]):
             ops = ops_for_bucket(size, total_payload_bytes)
-            buf = os.urandom(size)
-            files = [test_dir / f"f_{i}.dat" for i in range(ops)]
+            buf = random_payload(size)
+            files = _bucket_paths(test_dir, ops)
 
             w_secs = _timed(lambda f: _write_file(f, buf, fsync), files, threads)
             rs.add(BenchmarkResult(

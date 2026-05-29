@@ -132,7 +132,7 @@ flow through the shared regression/report/orchestrator machinery.
 ```bash
 pip install -e .            # installs the `throughput` console script
 pip install -e .[dev]       # + pytest
-pytest                      # 79 tests, fully runnable without external binaries
+pytest                      # 95 tests, fully runnable without external binaries
 ```
 
 Optional extras pull in heavy SDKs only when needed: `pip install -e .[s3]`

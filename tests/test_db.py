@@ -41,6 +41,19 @@ def test_bulk_insert_batches_via_executemany():
     assert conn.committed is True
 
 
+def test_row_bytes_exact_below_sample_threshold():
+    rows = [("abcde",)] * 100          # 5 bytes each, under the sample cap
+    assert db._row_bytes(rows) == 500
+
+
+def test_row_bytes_samples_and_extrapolates_large_sets():
+    # With fixed-width rows, sample-and-extrapolate must equal the exact total,
+    # while only stringifying the sample (not all rows).
+    n = db._SAMPLE_ROWS * 3
+    rows = [("abcdefghij",)] * n        # 10 bytes each
+    assert db._row_bytes(rows) == 10 * n
+
+
 def test_bulk_read_counts_rows():
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE t (a INTEGER)")

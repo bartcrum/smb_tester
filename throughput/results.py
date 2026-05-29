@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -53,11 +53,21 @@ class BenchmarkResult:
     )
 
     def to_flat(self) -> dict[str, Any]:
-        d = asdict(self)
-        d["mb_per_s"] = self.mb_per_s
-        d["ops_per_s"] = self.ops_per_s
-        d["metadata"] = json.dumps(self.metadata, sort_keys=True)
-        return {k: d[k] for k in self.FLAT_FIELDS}
+        # Build the row directly from attributes — ``asdict`` would deep-copy
+        # the whole dataclass (including metadata) on every exported row.
+        return {
+            "tool": self.tool,
+            "target": self.target,
+            "bucket": self.bucket,
+            "operation": self.operation,
+            "size_bytes": self.size_bytes,
+            "bytes_total": self.bytes_total,
+            "ops": self.ops,
+            "seconds": self.seconds,
+            "mb_per_s": self.mb_per_s,
+            "ops_per_s": self.ops_per_s,
+            "metadata": json.dumps(self.metadata, sort_keys=True),
+        }
 
     @classmethod
     def from_flat(cls, row: dict[str, Any]) -> "BenchmarkResult":
