@@ -1,13 +1,17 @@
 # smb_tester
 
-A small toolkit for measuring storage and network service throughput. The
-first tool is a PowerShell SMB throughput sweep that profiles read/write
-performance across a range of file sizes, exposing the small-file vs
-large-file overhead curve.
+A toolkit for measuring storage and network service throughput. It started as
+a PowerShell SMB throughput sweep and has grown into a cross-platform
+**Python benchmarking suite** (`throughput/`) that profiles read/write/transfer
+performance across a range of payload sizes for many services — always exposing
+the small-vs-large overhead curve and emitting one comparable result shape.
 
-This repo is intended to grow into a broader **throughput / performance
-benchmarking suite** as we scale to other file and network services — see
-[Roadmap: other tools to add](#roadmap-other-tools-to-add) below.
+- **[`invoke_smb_throughput_test.ps1`](#invoke_smb_throughput_testps1)** — the
+  original Windows-native SMB sweep.
+- **[`throughput/` Python suite](#throughput-python-suite)** — iperf3, latency,
+  MTU, filesystem/NFS, fio/diskspd, S3/Azure/GCS, rsync/FTP/SFTP, HTTP, DB, and
+  message-queue benchmarks, plus a shared results schema, regression harness,
+  HTML report generator, orchestrator, and CLI.
 
 ---
 
@@ -114,69 +118,127 @@ verb-noun PowerShell-idiomatic name). The file currently lives as
 
 ---
 
-## Roadmap: other tools to add
+## `throughput/` Python suite
 
-As we scale to other file and network services, these are natural additions to
-keep this repo a one-stop throughput/perf toolkit. Grouped by layer:
+A cross-platform Python package that extends the SMB tool's approach to many
+services. Every benchmark emits the same
+[`BenchmarkResult`](throughput/results.py) shape — `tool, target, bucket,
+operation, bytes_total, ops, seconds` (+ derived `mb_per_s` / `ops_per_s`) — so
+results from any tool are directly comparable, export to the same CSV/JSON, and
+flow through the shared regression/report/orchestrator machinery.
 
-### Network-layer (raw bandwidth & latency)
+### Install & test
 
-- **`iperf3` wrapper** — raw TCP/UDP line-rate baseline to compare against
-  protocol-level results above. Knowing your raw ceiling makes the SMB
-  "protocol-bound vs bandwidth-bound" call unambiguous.
-- **Latency/jitter probe** — wrap `ping` / `Test-Connection` / `psping` to
-  capture RTT distribution and packet loss over time, not just an average.
-- **MTU / path-MTU discovery** — detect fragmentation that silently caps
-  throughput.
+```bash
+pip install -e .            # installs the `throughput` console script
+pip install -e .[dev]       # + pytest
+pytest                      # 79 tests, fully runnable without external binaries
+```
 
-### File / object storage protocols
+Optional extras pull in heavy SDKs only when needed: `pip install -e .[s3]`
+(boto3). Azure/GCS/Kafka adapters lazy-import their SDKs, so the suite imports
+and tests fine without them.
 
-- **NFS throughput sweep** — Linux/NFS analog of the SMB tool (`fio` or `dd`
-  driven) so we can compare SMB vs NFS on the same NAS.
-- **S3 / object-store benchmark** — parallel `PUT`/`GET` across object sizes
-  using the AWS SDK or `s3-benchmark` / `warp` (MinIO). Same small-vs-large
-  curve, but for object stores; surfaces per-object request overhead and
-  multipart thresholds.
-- **Azure Blob / Files & GCS benchmarks** — analogous wrappers as we touch more
-  clouds; reuse the bucketed-payload + CSV-compare pattern.
-- **Local disk baseline (`fio` / `diskspd`)** — isolate storage from network by
-  benchmarking the target's local disk directly, so we can attribute slowness
-  to wire vs spindle/SSD.
-- **FTP/SFTP/rsync throughput** — for transfer-oriented services and migration
-  planning.
+### Design
 
-### Application / service layer
+Tools that wrap an external binary (iperf3, fio, rsync, wrk/k6, diskspd) keep
+**command building and output parsing as pure functions**, unit-tested against
+captured sample output — so the parsers are verified even where the binary
+isn't installed. The `run*` helpers shell out and require the binary at runtime.
+Pure-Python tools (filesystem sweep, latency, HTTP load, sqlite DB, in-memory
+queue) actually move bytes and are exercised end-to-end in the tests.
 
-- **HTTP(S) throughput & latency** — wrap `wrk`, `k6`, or `hey` for REST/object
-  download endpoints; reuse the size-bucket idea for payload sweeps.
-- **Database bulk I/O** — bulk insert / bulk read throughput for SQL/NoSQL
-  targets as we onboard data-heavy apps.
-- **Message-queue throughput** — Kafka / RabbitMQ / SQS producer-consumer
-  rates, again across message sizes.
+### Tools
 
-### Shared infrastructure (build once, reuse everywhere)
+| Area | Module | What it does | Status |
+|------|--------|--------------|--------|
+| Network | [`tools/iperf3.py`](throughput/tools/iperf3.py) | Raw TCP/UDP line-rate baseline (`iperf3 -J` parser) | ✅ |
+| Network | [`tools/latency.py`](throughput/tools/latency.py) | RTT distribution + jitter + loss (TCP connect probe / `ping` parser) | ✅ |
+| Network | [`tools/mtu.py`](throughput/tools/mtu.py) | Path-MTU discovery (binary search + `ping` DF probe) | ✅ |
+| Storage | [`tools/filesweep.py`](throughput/tools/filesweep.py) | Parallel read/write sweep for NFS / mounted shares / local disk | ✅ |
+| Storage | [`tools/disk.py`](throughput/tools/disk.py) | Local disk baseline (`fio` JSON + `diskspd` text parsers) | ✅ |
+| Storage | [`tools/objectstore.py`](throughput/tools/objectstore.py) | Object PUT/GET sweep — S3 / Azure Blob / GCS adapters | ✅ |
+| Storage | [`tools/transfer.py`](throughput/tools/transfer.py) | Bulk transfer — `rsync --stats` parser + FTP/SFTP timing | ✅ |
+| App | [`tools/http_load.py`](throughput/tools/http_load.py) | HTTP(S) throughput & latency (pure-Python load + `wrk`/`k6` parsers) | ✅ |
+| App | [`tools/db.py`](throughput/tools/db.py) | DB bulk insert/read (DB-API generic; sqlite built in) | ✅ |
+| App | [`tools/mq.py`](throughput/tools/mq.py) | Message-queue produce/consume — Kafka / SQS adapters | ✅ |
+| Shared | [`results.py`](throughput/results.py) | Common result schema + CSV/JSON export + baseline diff | ✅ |
+| Shared | [`buckets.py`](throughput/buckets.py) | Constant-payload size-bucket sweep helper | ✅ |
+| Shared | [`regression.py`](throughput/regression.py) | Baseline store + fail-on-regression check (CI gate) | ✅ |
+| Shared | [`report.py`](throughput/report.py) | Self-contained HTML report with inline-SVG bar charts | ✅ |
+| Shared | [`orchestrator.py`](throughput/orchestrator.py) | Run a plan of probes → one merged result (failures non-fatal) | ✅ |
+| Shared | [`cli.py`](throughput/cli.py) | `throughput` CLI: run / report / compare | ✅ |
 
-- **Common results schema + CSV/JSON exporters** — every tool emits the same
-  shape (`bucket, size, MB/s, ops/s, seconds`) so cross-tool comparison and the
-  existing `-CompareWith` diff logic work everywhere.
-- **Baseline/regression harness** — store baselines per target and fail CI (or
-  alert) when throughput regresses beyond a threshold.
-- **Dashboard / report generator** — render sweep CSVs into the small-vs-large
-  curve charts (HTML or Grafana) instead of eyeballing tables.
-- **Orchestrator** — one entry point that runs the relevant probes against a
-  named target and produces a single comparison report (raw iperf vs SMB vs NFS
-  vs disk), making the bottleneck obvious at a glance.
+### CLI usage
+
+```bash
+# Filesystem read/write sweep at a path (NFS/SMB mount or local), export CSV+HTML
+throughput filesweep /mnt/nas --threads 16 --payload-mb 512 --csv run.csv --html run.html
+
+# TCP connect-latency probe (default port 445 = SMB)
+throughput latency nas01 --port 445 --count 20
+
+# HTTP load test
+throughput http https://api.example.com/health --requests 1000 --concurrency 50
+
+# sqlite bulk insert/read micro-benchmark
+throughput db --rows 100000 --batch 2000
+
+# Render an HTML report from any results CSV
+throughput report run.csv --out run.html
+
+# Regression-gate a run against a baseline (exit 1 if MB/s drops > threshold%)
+throughput compare run.csv --baseline baseline.csv --threshold 10
+```
+
+### Programmatic usage
+
+```python
+from throughput import ResultSet
+from throughput.orchestrator import run_plan
+from throughput.report import write_report
+from throughput.regression import check_regression, load_baseline
+
+# Run raw bandwidth, SMB-mount, and local-disk probes in one pass
+plan = [
+    {"tool": "iperf3",    "args": {"host": "10.0.0.5"}},
+    {"tool": "filesweep", "args": {"path": "/mnt/nas", "tool": "smb"}},
+    {"tool": "filesweep", "args": {"path": "/tmp",     "tool": "disk"}},
+]
+result = run_plan(plan)            # failing probes are captured, not fatal
+write_report(result.results, "report.html")
+
+report = check_regression(result.results, load_baseline("baseline.csv"))
+print(report.format())            # PASS/FAIL with per-bucket deltas
+```
+
+### Roadmap / not yet done
+
+The core surface is in place. Natural follow-ups:
+
+- **Grafana / Prometheus export** alongside the static HTML report.
+- **Live adapters validated against real backends** (MinIO for S3, a local
+  RabbitMQ/Kafka) in an integration test tier, gated behind a marker so the
+  default `pytest` run stays binary-free.
+- **`hey`/`vegeta` HTTP parsers** and **NFS-specific `nfsstat` context** to
+  mirror the SMB tool's connection diagnostics.
+- **Continuous baseline storage** (per-target history) feeding the regression
+  gate in CI.
 
 ---
 
 ## Contributing
 
-New benchmarks should follow the conventions established by the SMB tool:
+New benchmarks should follow the conventions the suite is built on:
 
-- **Constant total payload per bucket** so size buckets are directly comparable.
-- **Report both throughput (MB/s) and operations/s** — the ratio between
-  small and large is where the insight lives.
-- **Emit CSV** with a comparable schema and support a `-CompareWith` baseline.
-- **Print connection/context diagnostics** up front (protocol version, latency,
-  relevant capabilities) and **degrade gracefully** when diagnostics aren't
-  available on the target.
+- **Constant total payload per bucket** (see `buckets.py`) so size buckets are
+  directly comparable.
+- **Emit `BenchmarkResult`** — report raw `bytes_total` and `ops` and let MB/s
+  and ops/s derive from them; the small-vs-large ratio is where the insight
+  lives.
+- **Reuse the shared exporters and diff** (`ResultSet.to_csv/from_csv`,
+  `compare`) so `regression`, `report`, and the orchestrator work for free.
+- **Keep binary wrappers pure-then-shell**: a pure `build_command` + `parse`
+  pair (unit-tested against captured output) and a thin `run*` that shells out,
+  so tests don't need the binary installed.
+- **Add tests** that pass under a plain `pytest` run with no external services.
