@@ -17,14 +17,20 @@ from concurrent.futures import ThreadPoolExecutor
 from ..results import BenchmarkResult, ResultSet
 from .latency import summarize
 
+# Drain response bodies in bounded chunks: we only need the byte count, so
+# never materialize a whole large download in memory (× concurrency).
+_HTTP_CHUNK = 1 << 16
+
 
 def _one_request(url: str, method: str, data: bytes | None, timeout: float):
     req = urllib.request.Request(url, data=data, method=method)
     t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read()
+        nbytes = 0
+        while chunk := resp.read(_HTTP_CHUNK):
+            nbytes += len(chunk)
         status = resp.status
-    return (time.perf_counter() - t0) * 1000.0, len(body), status
+    return (time.perf_counter() - t0) * 1000.0, nbytes, status
 
 
 def run_http_load(url: str, *, requests: int = 100, concurrency: int = 10,

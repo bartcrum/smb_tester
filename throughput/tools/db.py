@@ -14,13 +14,27 @@ from typing import Sequence
 
 from ..results import BenchmarkResult, ResultSet
 
+# Above this row count we size from a sample and extrapolate rather than
+# stringify+encode every cell — that O(rows×cols) pass allocates a throwaway
+# str and bytes per value, heavy transient CPU/memory on the host for large
+# result sets (the figure is only a reporting metric, not a timed quantity).
+_SAMPLE_ROWS = 2000
 
-def _row_bytes(rows: Sequence[Sequence]) -> int:
+
+def _measure_rows(rows: Sequence[Sequence]) -> int:
     total = 0
     for row in rows:
         for v in row:
             total += len(str(v).encode("utf-8")) if v is not None else 0
     return total
+
+
+def _row_bytes(rows: Sequence[Sequence]) -> int:
+    n = len(rows)
+    if n <= _SAMPLE_ROWS:
+        return _measure_rows(rows)
+    sampled = _measure_rows(rows[:_SAMPLE_ROWS])
+    return int(round(sampled * n / _SAMPLE_ROWS))
 
 
 def bulk_insert(conn, table: str, columns: Sequence[str],

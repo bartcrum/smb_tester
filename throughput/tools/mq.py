@@ -8,13 +8,13 @@ tested here.
 
 from __future__ import annotations
 
-import os
 import queue
 import time
 from typing import Protocol
 
 from ..buckets import default_byte_sizes, ops_for_bucket
 from ..results import BenchmarkResult, ResultSet, MB
+from ._payload import random_payload
 
 
 class MessageClient(Protocol):
@@ -31,7 +31,7 @@ def run_mq_throughput(client: MessageClient, target: str, *,
     rs = ResultSet()
     for label, size in sorted(sizes.items(), key=lambda kv: kv[1]):
         ops = ops_for_bucket(size, total_payload_bytes)
-        payload = os.urandom(size)
+        payload = random_payload(size)
 
         start = time.perf_counter()
         for _ in range(ops):

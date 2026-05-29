@@ -13,14 +13,14 @@ in-memory fake.
 
 from __future__ import annotations
 
-import os
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
 from ..buckets import default_byte_sizes, ops_for_bucket
 from ..results import BenchmarkResult, ResultSet, MB
+from ._parallel import map_chunked
+from ._payload import random_payload
 
 
 class ObjectClient(Protocol):
@@ -31,8 +31,7 @@ class ObjectClient(Protocol):
 
 def _timed(fn, items, threads: int) -> float:
     start = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max(1, threads)) as ex:
-        list(ex.map(fn, items))
+    map_chunked(fn, items, max(1, threads))
     return max(time.perf_counter() - start, 1e-9)
 
 
@@ -47,7 +46,7 @@ def run_object_sweep(client: ObjectClient, container: str, *,
     rs = ResultSet()
     for label, size in sorted(sizes.items(), key=lambda kv: kv[1]):
         ops = ops_for_bucket(size, total_payload_bytes)
-        data = os.urandom(size)
+        data = random_payload(size)
         keys = [f"{prefix}/{label}/obj_{i}" for i in range(ops)]
 
         put_s = _timed(lambda k: client.put(k, data), keys, threads)

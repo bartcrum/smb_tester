@@ -27,6 +27,35 @@ def server():
     srv.shutdown()
 
 
+class _BigHandler(http.server.BaseHTTPRequestHandler):
+    BODY = b"y" * (256 * 1024)        # larger than _HTTP_CHUNK (64 KiB)
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(self.BODY)))
+        self.end_headers()
+        self.wfile.write(self.BODY)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def big_server():
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BigHandler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}/"
+    srv.shutdown()
+
+
+def test_run_http_load_counts_multichunk_body(big_server):
+    # Body spans several _HTTP_CHUNK reads: the chunked drain must total it all.
+    rs = http_load.run_http_load(big_server, requests=4, concurrency=2)
+    r = rs.results[0]
+    assert r.bytes_total == 4 * 256 * 1024
+
+
 def test_run_http_load_real_server(server):
     rs = http_load.run_http_load(server, requests=20, concurrency=5)
     r = rs.results[0]

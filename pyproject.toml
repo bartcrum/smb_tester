@@ -10,8 +10,16 @@ requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
+# Per-backend cloud SDKs (lazy-imported by the adapters; only needed at runtime
+# for that backend, or at build time to bundle it into the Windows exe).
 s3 = ["boto3"]
+azure = ["azure-storage-blob"]
+gcs = ["google-cloud-storage"]
+kafka = ["confluent-kafka"]
+cloud = ["boto3", "azure-storage-blob", "google-cloud-storage", "confluent-kafka"]
 dev = ["pytest"]
+# Everything PyInstaller needs to build the full "core + cloud" throughput.exe.
+build = ["pyinstaller", "boto3", "azure-storage-blob", "google-cloud-storage", "confluent-kafka"]
 
 [project.scripts]
 throughput = "throughput.cli:main"
