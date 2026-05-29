@@ -227,6 +227,26 @@ The core surface is in place. Natural follow-ups:
 
 ---
 
+## Packaging for Windows clients (no Python required)
+
+For end clients on Windows that don't have Python, the Python suite can be
+frozen into a single self-contained **`throughput.exe`** (embedded runtime +
+all cloud SDKs) with PyInstaller:
+
+```powershell
+pip install -e .[build]                  # suite + PyInstaller + cloud SDKs
+pyinstaller packaging\throughput.spec    # -> dist\throughput.exe
+```
+
+The native SMB sweep (`invoke_smb_throughput_test.ps1`) ships **alongside** the
+exe — it's run by PowerShell 7+, not bundled. Full build steps, a core-only
+(smaller) build, signing/AV notes, and client-side usage for both artifacts are
+in **[`packaging/PACKAGING.md`](packaging/PACKAGING.md)**.
+
+> PyInstaller isn't a cross-compiler — build the Windows exe on a Windows host.
+
+---
+
 ## Contributing
 
 New benchmarks should follow the conventions the suite is built on:
