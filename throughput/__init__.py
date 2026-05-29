@@ -7,6 +7,7 @@ the shared CSV/JSON exporters and baseline-diff logic work everywhere.
 
 from .results import BenchmarkResult, ResultSet, MB
 from .buckets import default_byte_sizes, sweep_buckets
+from .prometheus import render_prometheus, write_prometheus
 
 __all__ = [
     "BenchmarkResult",
@@ -14,6 +15,8 @@ __all__ = [
     "MB",
     "default_byte_sizes",
     "sweep_buckets",
+    "render_prometheus",
+    "write_prometheus",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

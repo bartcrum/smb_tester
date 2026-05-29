@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "throughput"
-version = "0.1.0"
+version = "0.2.0"
 description = "Throughput / performance benchmarking suite for file and network services"
 requires-python = ">=3.9"
 dependencies = []
@@ -29,4 +29,9 @@ include = ["throughput*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Keep the default run binary-/backend-free: the live integration tier is
+# deselected unless you opt in with `pytest -m integration`.
+addopts = "-q -m 'not integration'"
+markers = [
+    "integration: needs a live backend (MinIO/S3, Kafka, ...); deselected by default",
+]

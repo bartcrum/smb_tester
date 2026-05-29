@@ -1,0 +1,99 @@
+{
+  "__comment": "Grafana dashboard for the throughput suite's Prometheus export. Import via Dashboards -> New -> Import, and point it at a Prometheus datasource scraping the metrics written by `throughput ... --prom` / `write_prometheus` (e.g. via the node_exporter textfile collector). Metrics: throughput_mb_per_s, throughput_ops_per_s, throughput_latency_ms{stat=...}.",
+  "title": "Throughput suite",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["throughput", "benchmark"],
+  "templating": {
+    "list": [
+      {
+        "name": "tool",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": "label_values(throughput_mb_per_s, tool)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2
+      },
+      {
+        "name": "target",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": "label_values(throughput_mb_per_s{tool=~\"$tool\"}, target)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2
+      }
+    ]
+  },
+  "templating_inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Throughput (MB/s) by bucket",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "MBs"}},
+      "targets": [
+        {
+          "expr": "throughput_mb_per_s{tool=~\"$tool\", target=~\"$target\"}",
+          "legendFormat": "{{tool}} {{bucket}} {{operation}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Operations/sec by bucket",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "ops"}},
+      "targets": [
+        {
+          "expr": "throughput_ops_per_s{tool=~\"$tool\", target=~\"$target\"}",
+          "legendFormat": "{{tool}} {{bucket}} {{operation}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency (ms) p50/p95",
+      "type": "timeseries",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 9},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [
+        {
+          "expr": "throughput_latency_ms{tool=~\"$tool\", target=~\"$target\", stat=~\"p50|p95\"}",
+          "legendFormat": "{{tool}} {{bucket}} {{stat}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Latest MB/s (small-vs-large curve)",
+      "type": "bargauge",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 9},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "fieldConfig": {"defaults": {"unit": "MBs"}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient"},
+      "targets": [
+        {
+          "expr": "throughput_mb_per_s{tool=~\"$tool\", target=~\"$target\"}",
+          "legendFormat": "{{tool}} {{bucket}} {{operation}}",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}
