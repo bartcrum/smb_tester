@@ -1,4 +1,4 @@
-# smb_tester
+# throughput_suite
 
 A toolkit for measuring storage and network service throughput. It started as
 a PowerShell SMB throughput sweep and has grown into a cross-platform
