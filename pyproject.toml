@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "throughput"
+version = "0.1.0"
+description = "Throughput / performance benchmarking suite for file and network services"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+s3 = ["boto3"]
+dev = ["pytest"]
+
+[project.scripts]
+throughput = "throughput.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["throughput*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
