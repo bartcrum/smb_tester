@@ -12,7 +12,7 @@ import sys
 
 from .buckets import MB
 from .results import ResultSet
-from . import regression, report as report_mod
+from . import history, prometheus, regression, report as report_mod
 from .tools import filesweep, latency, http_load, db
 
 
@@ -38,12 +38,16 @@ def _emit(results: ResultSet, args) -> None:
     if getattr(args, "html", None):
         report_mod.write_report(results, args.html)
         print(f"HTML -> {args.html}")
+    if getattr(args, "prom", None):
+        prometheus.write_prometheus(results, args.prom)
+        print(f"PROM -> {args.prom}")
 
 
 def _add_output_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--csv")
     p.add_argument("--json")
     p.add_argument("--html")
+    p.add_argument("--prom", help="write Prometheus text-exposition metrics")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,6 +88,26 @@ def build_parser() -> argparse.ArgumentParser:
     cmp.add_argument("--baseline", required=True)
     cmp.add_argument("--threshold", type=float, default=10.0)
 
+    prom = sub.add_parser("prometheus",
+                          help="render Prometheus metrics from a results CSV")
+    prom.add_argument("csv")
+    prom.add_argument("--out", required=True)
+
+    bl = sub.add_parser("baseline",
+                        help="continuous per-target baseline history")
+    blsub = bl.add_subparsers(dest="baseline_cmd", required=True)
+    rec = blsub.add_parser("record", help="append a run CSV to the history store")
+    rec.add_argument("csv")
+    rec.add_argument("--store", required=True)
+    rec.add_argument("--run-id")
+    chk = blsub.add_parser("check", help="gate a run CSV against rolling history")
+    chk.add_argument("csv")
+    chk.add_argument("--store", required=True)
+    chk.add_argument("--threshold", type=float, default=10.0)
+    chk.add_argument("--window", type=int, default=5)
+    chk.add_argument("--agg", choices=["median", "mean", "min", "max"],
+                     default="median")
+
     return parser
 
 
@@ -111,6 +135,20 @@ def main(argv: list[str] | None = None) -> int:
                                           threshold_pct=args.threshold)
         print(rep.format())
         return 0 if rep.ok else 1
+    elif args.cmd == "prometheus":
+        prometheus.write_prometheus(ResultSet.from_csv(args.csv), args.out)
+        print(f"PROM -> {args.out}")
+    elif args.cmd == "baseline":
+        if args.baseline_cmd == "record":
+            path = history.record_run(ResultSet.from_csv(args.csv), args.store,
+                                      run_id=args.run_id)
+            print(f"recorded -> {path}")
+        elif args.baseline_cmd == "check":
+            rep = history.check_against_history(
+                ResultSet.from_csv(args.csv), args.store,
+                threshold_pct=args.threshold, window=args.window, agg=args.agg)
+            print(rep.format())
+            return 0 if rep.ok else 1
     return 0
 
 

@@ -102,7 +102,23 @@ def run_sweep(path: str | Path, *, sizes: dict[str, int] | None = None,
     return rs
 
 
-def run_nfs(mount_path, **kw) -> ResultSet:
-    """Convenience: filesystem sweep labeled as NFS (point at an NFS mount)."""
+def run_nfs(mount_path, *, with_context: bool = False, **kw) -> ResultSet:
+    """Convenience: filesystem sweep labeled as NFS (point at an NFS mount).
+
+    With ``with_context=True`` the negotiated NFS mount options and client RPC
+    retransmit rate (via ``nfsstat``) are attached to each result's metadata
+    under ``"nfs_context"`` — the NFS analog of the SMB tool's connection
+    diagnostics. Degrades silently if ``nfsstat`` is unavailable.
+    """
     kw.setdefault("tool", "nfs")
-    return run_sweep(mount_path, **kw)
+    rs = run_sweep(mount_path, **kw)
+    if with_context:
+        from .nfsstat import collect_context
+        try:
+            ctx = collect_context(str(mount_path))
+        except Exception:
+            ctx = None
+        if ctx:
+            for r in rs:
+                r.metadata["nfs_context"] = ctx
+    return rs

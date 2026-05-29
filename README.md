@@ -11,7 +11,8 @@ the small-vs-large overhead curve and emitting one comparable result shape.
 - **[`throughput/` Python suite](#throughput-python-suite)** — iperf3, latency,
   MTU, filesystem/NFS, fio/diskspd, S3/Azure/GCS, rsync/FTP/SFTP, HTTP, DB, and
   message-queue benchmarks, plus a shared results schema, regression harness,
-  HTML report generator, orchestrator, and CLI.
+  HTML **and Prometheus** report generators (with a Grafana dashboard),
+  continuous baseline history, orchestrator, and CLI.
 
 ---
 
@@ -132,7 +133,7 @@ flow through the shared regression/report/orchestrator machinery.
 ```bash
 pip install -e .            # installs the `throughput` console script
 pip install -e .[dev]       # + pytest
-pytest                      # 95 tests, fully runnable without external binaries
+pytest                      # 120 tests, fully runnable without external binaries
 ```
 
 Optional extras pull in heavy SDKs only when needed: `pip install -e .[s3]`
@@ -155,19 +156,22 @@ queue) actually move bytes and are exercised end-to-end in the tests.
 | Network | [`tools/iperf3.py`](throughput/tools/iperf3.py) | Raw TCP/UDP line-rate baseline (`iperf3 -J` parser) | ✅ |
 | Network | [`tools/latency.py`](throughput/tools/latency.py) | RTT distribution + jitter + loss (TCP connect probe / `ping` parser) | ✅ |
 | Network | [`tools/mtu.py`](throughput/tools/mtu.py) | Path-MTU discovery (binary search + `ping` DF probe) | ✅ |
-| Storage | [`tools/filesweep.py`](throughput/tools/filesweep.py) | Parallel read/write sweep for NFS / mounted shares / local disk | ✅ |
+| Network | [`tools/nfsstat.py`](throughput/tools/nfsstat.py) | NFS connection context — `nfsstat -m`/`-c` parsers (vers/proto/rsize + RPC retrans) | ✅ |
+| Storage | [`tools/filesweep.py`](throughput/tools/filesweep.py) | Parallel read/write sweep for NFS / mounted shares / local disk (NFS context optional) | ✅ |
 | Storage | [`tools/disk.py`](throughput/tools/disk.py) | Local disk baseline (`fio` JSON + `diskspd` text parsers) | ✅ |
 | Storage | [`tools/objectstore.py`](throughput/tools/objectstore.py) | Object PUT/GET sweep — S3 / Azure Blob / GCS adapters | ✅ |
 | Storage | [`tools/transfer.py`](throughput/tools/transfer.py) | Bulk transfer — `rsync --stats` parser + FTP/SFTP timing | ✅ |
-| App | [`tools/http_load.py`](throughput/tools/http_load.py) | HTTP(S) throughput & latency (pure-Python load + `wrk`/`k6` parsers) | ✅ |
+| App | [`tools/http_load.py`](throughput/tools/http_load.py) | HTTP(S) throughput & latency (pure-Python load + `wrk`/`k6`/`hey`/`vegeta` parsers) | ✅ |
 | App | [`tools/db.py`](throughput/tools/db.py) | DB bulk insert/read (DB-API generic; sqlite built in) | ✅ |
 | App | [`tools/mq.py`](throughput/tools/mq.py) | Message-queue produce/consume — Kafka / SQS adapters | ✅ |
 | Shared | [`results.py`](throughput/results.py) | Common result schema + CSV/JSON export + baseline diff | ✅ |
 | Shared | [`buckets.py`](throughput/buckets.py) | Constant-payload size-bucket sweep helper | ✅ |
 | Shared | [`regression.py`](throughput/regression.py) | Baseline store + fail-on-regression check (CI gate) | ✅ |
+| Shared | [`history.py`](throughput/history.py) | Continuous per-target baseline history → rolling-median regression gate | ✅ |
 | Shared | [`report.py`](throughput/report.py) | Self-contained HTML report with inline-SVG bar charts | ✅ |
+| Shared | [`prometheus.py`](throughput/prometheus.py) | Prometheus text-exposition export (+ [Grafana dashboard](grafana/throughput-dashboard.json)) | ✅ |
 | Shared | [`orchestrator.py`](throughput/orchestrator.py) | Run a plan of probes → one merged result (failures non-fatal) | ✅ |
-| Shared | [`cli.py`](throughput/cli.py) | `throughput` CLI: run / report / compare | ✅ |
+| Shared | [`cli.py`](throughput/cli.py) | `throughput` CLI: run / report / prometheus / compare / baseline | ✅ |
 
 ### CLI usage
 
@@ -187,9 +191,40 @@ throughput db --rows 100000 --batch 2000
 # Render an HTML report from any results CSV
 throughput report run.csv --out run.html
 
+# Export Prometheus metrics (any run command also takes --prom PATH)
+throughput prometheus run.csv --out run.prom
+throughput filesweep /mnt/nas --prom /var/lib/node_exporter/textfile/throughput.prom
+
 # Regression-gate a run against a baseline (exit 1 if MB/s drops > threshold%)
 throughput compare run.csv --baseline baseline.csv --threshold 10
+
+# Continuous per-target baseline history: record every run, gate against the
+# rolling median of the recent window (exit 1 on regression).
+throughput baseline record run.csv --store .baselines --run-id "$GIT_SHA"
+throughput baseline check  run.csv --store .baselines --threshold 10 --window 5
 ```
+
+### Prometheus / Grafana
+
+`throughput ... --prom out.prom` (or `throughput prometheus run.csv --out
+out.prom`) emits the [Prometheus text-exposition
+format](https://prometheus.io/docs/instrumenting/exposition_formats/): every
+measurement becomes a gauge labelled by `tool`/`target`/`bucket`/`operation`
+(`throughput_mb_per_s`, `throughput_ops_per_s`, `throughput_bytes_total`,
+`throughput_ops`, `throughput_seconds`), and latency stats from result metadata
+export as `throughput_latency_ms{stat="p95",...}`. `write_prometheus` writes
+atomically, so pointing `--prom` at the node_exporter **textfile collector**
+directory is safe. Import [`grafana/throughput-dashboard.json`](grafana/throughput-dashboard.json)
+for ready-made MB/s, ops/s, and latency panels.
+
+### Continuous baseline history
+
+`throughput baseline record` appends each run to a store (a directory of
+timestamped result CSVs). `throughput baseline check` gates a new run against
+the **rolling median of the recent window** rather than a single frozen
+baseline, so one noisy run neither trips the gate nor silently becomes the new
+normal. Both wrap [`throughput/history.py`](throughput/history.py); the gate
+reuses the same `check_regression` machinery as `compare`.
 
 ### Programmatic usage
 
@@ -212,18 +247,30 @@ report = check_regression(result.results, load_baseline("baseline.csv"))
 print(report.format())            # PASS/FAIL with per-bucket deltas
 ```
 
-### Roadmap / not yet done
+### Roadmap
 
-The core surface is in place. Natural follow-ups:
+Shipped in the **0.2.0** release (all the previous follow-ups):
 
-- **Grafana / Prometheus export** alongside the static HTML report.
-- **Live adapters validated against real backends** (MinIO for S3, a local
-  RabbitMQ/Kafka) in an integration test tier, gated behind a marker so the
-  default `pytest` run stays binary-free.
-- **`hey`/`vegeta` HTTP parsers** and **NFS-specific `nfsstat` context** to
-  mirror the SMB tool's connection diagnostics.
-- **Continuous baseline storage** (per-target history) feeding the regression
-  gate in CI.
+- ✅ **Grafana / Prometheus export** alongside the static HTML report —
+  [`prometheus.py`](throughput/prometheus.py) + a
+  [Grafana dashboard](grafana/throughput-dashboard.json).
+- ✅ **Live adapters validated against real backends** (MinIO for S3, a local
+  Kafka) in an [integration test tier](tests/integration/), gated behind the
+  `integration` marker so the default `pytest` run stays binary-free.
+- ✅ **`hey`/`vegeta` HTTP parsers** ([`http_load.py`](throughput/tools/http_load.py))
+  and **NFS-specific `nfsstat` context** ([`nfsstat.py`](throughput/tools/nfsstat.py),
+  wired into `filesweep.run_nfs(..., with_context=True)`) mirroring the SMB
+  tool's connection diagnostics.
+- ✅ **Continuous baseline storage** (per-target history) feeding the regression
+  gate — [`history.py`](throughput/history.py), `throughput baseline`.
+
+Natural next steps:
+
+- **Azure Blob / GCS** integration tests in the same tier (the S3/Kafka pattern
+  generalizes; an Azurite container would cover Blob).
+- **Pushgateway / remote-write** delivery for the Prometheus metrics, not just
+  textfile-collector output.
+- **History pruning / retention** (cap or age out old runs in the baseline store).
 
 ---
 
